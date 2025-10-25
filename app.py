@@ -237,6 +237,7 @@ def main() -> None:
     strip_proxy_variables(os.environ)
 
     request = build_request()
+    request = HTTPXRequest(trust_env=False)
     application = (
         Application.builder()
         .token(token)
