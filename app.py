@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, List, Optional
+from typing import Any, Iterable, List, MutableMapping, Optional
 
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -33,6 +33,24 @@ PROXY_ENV_VARS = (
     "all_proxy",
     "ALL_PROXY",
 )
+
+
+def strip_proxy_variables(
+    env: MutableMapping[str, str],
+    keys: Iterable[str] = PROXY_ENV_VARS,
+) -> None:
+    """Remove known proxy environment variables.
+
+    Crostini-based environments often inject proxy variables automatically.
+    They break direct access to Telegram, so we eagerly remove them before
+    constructing the HTTP client.  Accepting the mapping and list of keys makes
+    this function easy to test.
+    """
+
+    for key in keys:
+        if key in env:
+            logger.info("Removing proxy environment variable: %s", key)
+            env.pop(key, None)
 
 
 def load_config() -> None:
@@ -216,10 +234,7 @@ def main() -> None:
     """Run the Telegram bot using long polling."""
     load_config()
     token = get_token()
-    for var in PROXY_ENV_VARS:
-        if var in os.environ:
-            logger.info("Removing proxy environment variable: %s", var)
-            os.environ.pop(var, None)
+    strip_proxy_variables(os.environ)
 
     request = build_request()
     application = (
