@@ -14,6 +14,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
 )
+from telegram.request import HTTPXRequest
 
 from services.nansen import is_smart_money
 from services.polymarket import query_trades
@@ -22,6 +23,16 @@ from utils.fmt import build_message
 # Configure logging early so importers see it.
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+PROXY_ENV_VARS = (
+    "http_proxy",
+    "https_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "all_proxy",
+    "ALL_PROXY",
+)
 
 
 def load_config() -> None:
@@ -191,13 +202,30 @@ async def filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     )
 
 
+def build_request() -> HTTPXRequest:
+    """Create an HTTPXRequest respecting an optional explicit proxy setting."""
+    request_kwargs: dict[str, Any] = {"trust_env": False}
+    proxy_url = os.getenv("TELEGRAM_PROXY_URL")
+    if proxy_url:
+        logger.info("Using Telegram proxy: %s", proxy_url)
+        request_kwargs["proxy"] = proxy_url
+    return HTTPXRequest(**request_kwargs)
+
+
 def main() -> None:
     """Run the Telegram bot using long polling."""
     load_config()
     token = get_token()
+    for var in PROXY_ENV_VARS:
+        if var in os.environ:
+            logger.info("Removing proxy environment variable: %s", var)
+            os.environ.pop(var, None)
+
+    request = build_request()
     application = (
         Application.builder()
         .token(token)
+        .request(request)
         .build()
     )
 
