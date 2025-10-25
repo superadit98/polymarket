@@ -14,6 +14,7 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
 )
+from telegram.request import HTTPXRequest
 
 from services.nansen import is_smart_money
 from services.polymarket import query_trades
@@ -195,9 +196,11 @@ def main() -> None:
     """Run the Telegram bot using long polling."""
     load_config()
     token = get_token()
+    request = HTTPXRequest(trust_env=False)
     application = (
         Application.builder()
         .token(token)
+        .request(request)
         .build()
     )
 
