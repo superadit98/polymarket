@@ -203,9 +203,9 @@ async def filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 def build_request() -> HTTPXRequest:
-    """Create an HTTPXRequest respecting an optional explicit proxy setting."""
+    """Create an HTTPXRequest that optionally routes traffic via TELEGRAM_PROXY."""
     request_kwargs: dict[str, Any] = {"trust_env": False}
-    proxy_url = os.getenv("TELEGRAM_PROXY_URL")
+    proxy_url = os.getenv("TELEGRAM_PROXY")
     if proxy_url:
         logger.info("Using Telegram proxy: %s", proxy_url)
         request_kwargs["proxy"] = proxy_url
