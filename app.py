@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, List, Optional
+from typing import Any, Iterable, List, MutableMapping, Optional
 
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -23,6 +23,34 @@ from utils.fmt import build_message
 # Configure logging early so importers see it.
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+PROXY_ENV_VARS = (
+    "http_proxy",
+    "https_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "all_proxy",
+    "ALL_PROXY",
+)
+
+
+def strip_proxy_variables(
+    env: MutableMapping[str, str],
+    keys: Iterable[str] = PROXY_ENV_VARS,
+) -> None:
+    """Remove known proxy environment variables.
+
+    Crostini-based environments often inject proxy variables automatically.
+    They break direct access to Telegram, so we eagerly remove them before
+    constructing the HTTP client.  Accepting the mapping and list of keys makes
+    this function easy to test.
+    """
+
+    for key in keys:
+        if key in env:
+            logger.info("Removing proxy environment variable: %s", key)
+            env.pop(key, None)
 
 
 def load_config() -> None:
@@ -192,10 +220,23 @@ async def filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     )
 
 
+def build_request() -> HTTPXRequest:
+    """Create an HTTPXRequest that optionally routes traffic via TELEGRAM_PROXY."""
+    request_kwargs: dict[str, Any] = {"trust_env": False}
+    proxy_url = os.getenv("TELEGRAM_PROXY")
+    if proxy_url:
+        logger.info("Using Telegram proxy: %s", proxy_url)
+        request_kwargs["proxy"] = proxy_url
+    return HTTPXRequest(**request_kwargs)
+
+
 def main() -> None:
     """Run the Telegram bot using long polling."""
     load_config()
     token = get_token()
+    strip_proxy_variables(os.environ)
+
+    request = build_request()
     request = HTTPXRequest(trust_env=False)
     application = (
         Application.builder()
