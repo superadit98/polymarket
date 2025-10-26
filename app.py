@@ -177,3 +177,13 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+import os
+
+def main():
+    # Jalankan bot di sini
+    application.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    role = os.getenv("ROLE", "worker")
+    if role == "worker":
+        main()
