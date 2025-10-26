@@ -7,12 +7,14 @@ from typing import Any, Dict, List
 import requests
 
 
+# Endpoint default: versi yang (masih) punya 'fills'
 DEFAULT_SUBGRAPH_URL = (
-    "https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/"
-    "subgraphs/activity-subgraph/0.0.4/gn"
+    "https://api.goldsky.com/api/public/project_clt2s6h8u00hm35xj2dz1h1fg/"
+    "subgraphs/activity/0.0.3/gn"
 )
 
-SMART_QUERY = """
+# Query lama (schema dengan 'fills')
+FILLS_QUERY = """
 query RecentTrades($matchTime: BigInt!, $limit: Int!) {
   fills(
     first: $limit
@@ -34,6 +36,29 @@ query RecentTrades($matchTime: BigInt!, $limit: Int!) {
 }
 """
 
+# Fallback untuk schema baru (tanpa 'fills') – beberapa endpoint mengganti ke 'trades'
+TRADES_QUERY = """
+query RecentTrades($matchTime: BigInt!, $limit: Int!) {
+  trades(
+    first: $limit
+    orderBy: timestamp
+    orderDirection: desc
+    where: { timestamp_gte: $matchTime }
+  ) {
+    id
+    maker
+    outcome
+    amount
+    price
+    timestamp
+    market {
+      id
+      question
+    }
+  }
+}
+"""
+
 
 class PolymarketError(RuntimeError):
     """Raised when the Polymarket API request fails."""
@@ -47,31 +72,63 @@ def _get_subgraph_url() -> str:
     return env_url
 
 
-def query_trades(since_minutes: int = 120, limit: int = 200) -> List[Dict[str, Any]]:
-    """Query the recent Polymarket trades within the given timeframe."""
-    match_time = int(time.time()) - since_minutes * 60
-    url = _get_subgraph_url()
-    payload = {
-        "query": SMART_QUERY,
-        "variables": {"matchTime": match_time, "limit": limit},
-    }
-
+def _post_graphql(url: str, query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+    payload = {"query": query, "variables": variables}
     try:
-        response = requests.post(url, json=payload, timeout=15)
-        response.raise_for_status()
+        resp = requests.post(url, json=payload, timeout=20)
+        resp.raise_for_status()
     except requests.RequestException as exc:
         raise PolymarketError(f"Failed to call Polymarket subgraph: {exc}") from exc
-
     try:
-        data = response.json()
+        data = resp.json()
     except ValueError as exc:
-        raise PolymarketError(f"Invalid JSON response from Polymarket: {response.text}") from exc
-
-    if "errors" in data:
+        raise PolymarketError(f"Invalid JSON from Polymarket: {resp.text[:500]}") from exc
+    if "errors" in data and data["errors"]:
         raise PolymarketError(f"Polymarket query errors: {data['errors']}")
+    return data
 
-    fills = data.get("data", {}).get("fills", [])
-    if not isinstance(fills, list):
-        raise PolymarketError(f"Unexpected Polymarket response: {data}")
 
-    return fills
+def _normalize_from_trades(trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Map schema 'trades' -> schema 'fills' agar downstream tidak berubah."""
+    out: List[Dict[str, Any]] = []
+    for t in trades:
+        out.append(
+            {
+                "id": t.get("id"),
+                "makerAddress": t.get("maker"),
+                "outcome": t.get("outcome"),
+                "size": t.get("amount"),
+                "price": t.get("price"),
+                "matchTime": t.get("timestamp"),
+                "market": t.get("market") or {},
+            }
+        )
+    return out
+
+
+def query_trades(since_minutes: int = 120, limit: int = 200) -> List[Dict[str, Any]]:
+    """Query recent Polymarket trades; works with both old/new schemas."""
+    match_time = int(time.time()) - since_minutes * 60
+    url = _get_subgraph_url()
+    vars_ = {"matchTime": match_time, "limit": limit}
+
+    # 1) Coba schema lama ('fills')
+    try:
+        data = _post_graphql(url, FILLS_QUERY, vars_)
+        fills = data.get("data", {}).get("fills")
+        if isinstance(fills, list):
+            return fills
+        # kalau bukan list, coba fallback
+    except PolymarketError as e:
+        msg = str(e)
+        # Kalau error memang "no field `fills`", kita lanjut ke fallback
+        if "`fills`" not in msg and "has no field" not in msg:
+            # Error bukan karena schema; lempar lagi
+            raise
+
+    # 2) Fallback ke schema baru ('trades') dan normalisasi
+    data2 = _post_graphql(url, TRADES_QUERY, vars_)
+    trades = data2.get("data", {}).get("trades")
+    if not isinstance(trades, list):
+        raise PolymarketError(f"Unexpected Polymarket response: {data2}")
+    return _normalize_from_trades(trades)
