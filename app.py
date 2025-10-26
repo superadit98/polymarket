@@ -173,7 +173,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(filter_callback, pattern=r"^filter:"))
 
     logger.info("Starting bot polling loop")
-    application.run_polling(close_loop=False)
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
