@@ -4,8 +4,8 @@ from __future__ import annotations
 import os
 import time
 from typing import Any, Dict, List
-
 import requests
+
 
 DEFAULT_SUBGRAPH_URL = (
     "https://api.goldsky.com/api/public/project_cl6mb8i9h0003e201j6li0diw/"
@@ -40,8 +40,11 @@ class PolymarketError(RuntimeError):
 
 
 def _get_subgraph_url() -> str:
-    """Return the configured Polymarket subgraph endpoint."""
-    return os.getenv("POLY_SUBGRAPH_URL", DEFAULT_SUBGRAPH_URL)
+    """Return a valid Polymarket subgraph endpoint."""
+    env_url = (os.getenv("POLY_SUBGRAPH_URL") or "").strip()
+    if not env_url or not env_url.startswith("http"):
+        return DEFAULT_SUBGRAPH_URL
+    return env_url
 
 
 def query_trades(since_minutes: int = 120, limit: int = 200) -> List[Dict[str, Any]]:
@@ -55,21 +58,20 @@ def query_trades(since_minutes: int = 120, limit: int = 200) -> List[Dict[str, A
 
     try:
         response = requests.post(url, json=payload, timeout=15)
-    except requests.RequestException as exc:  # noqa: PERF203
-        raise PolymarketError("Failed to call Polymarket subgraph") from exc
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise PolymarketError(f"Failed to call Polymarket subgraph: {exc}") from exc
 
-    if response.status_code != 200:
-        raise PolymarketError(
-            f"Polymarket returned status {response.status_code}: {response.text}"
-        )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise PolymarketError(f"Invalid JSON response from Polymarket: {response.text}") from exc
 
-    data = response.json()
-    errors = data.get("errors")
-    if errors:
-        raise PolymarketError(f"Polymarket query errors: {errors}")
+    if "errors" in data:
+        raise PolymarketError(f"Polymarket query errors: {data['errors']}")
 
     fills = data.get("data", {}).get("fills", [])
     if not isinstance(fills, list):
-        raise PolymarketError("Unexpected Polymarket response structure")
+        raise PolymarketError(f"Unexpected Polymarket response: {data}")
 
     return fills
